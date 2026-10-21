@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Neilsmahajan/agents-top/blob/main/schema/agents-top.v1.schema.json",
+  "title": "agents-top --json output, schema version 1",
+  "description": "One snapshot of coding-agent sessions. Fields may be added in later 1.x tool versions without bumping schemaVersion; removing or changing a field bumps it. Fields marked heuristic are guesses.",
+  "type": "object",
+  "required": ["tool", "toolVersion", "schemaVersion", "generatedAt", "claude", "codex", "sharedResources"],
+  "properties": {
+    "tool": { "const": "agents-top" },
+    "toolVersion": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "claude": {
+      "type": "object",
+      "required": ["sessions", "remoteControlHosts"],
+      "properties": {
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/claudeSession" } },
+        "remoteControlHosts": { "type": "array", "items": { "$ref": "#/$defs/remoteControlHost" } }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "description": "Codex is reported from process information only: no model, tokens or tool.",
+      "required": ["processes"],
+      "properties": {
+        "processes": { "type": "array", "items": { "$ref": "#/$defs/codexProcess" } }
+      }
+    },
+    "sharedResources": {
+      "type": "array",
+      "description": "Heuristic: sessions that called Chrome or computer-use tools in the last 15 minutes.",
+      "items": { "$ref": "#/$defs/sharedResourceUse" }
+    }
+  },
+  "$defs": {
+    "nullableString": { "type": ["string", "null"] },
+    "nullableInt": { "type": ["integer", "null"], "minimum": 0 },
+    "timestampOrNull": { "type": ["string", "null"], "format": "date-time" },
+    "processFields": {
+      "type": "object",
+      "required": ["pid", "ppid", "uptime", "uptimeSeconds", "cpuPercent", "rssKb"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "ppid": { "type": "integer" },
+        "uptime": { "type": "string", "description": "ps elapsed time, [[dd-]hh:]mm:ss" },
+        "uptimeSeconds": { "$ref": "#/$defs/nullableInt" },
+        "cpuPercent": { "type": "number" },
+        "rssKb": { "type": "integer" }
+      }
+    },
+    "claudeSession": {
+      "allOf": [{ "$ref": "#/$defs/processFields" }],
+      "type": "object",
+      "required": [
+        "cwd",
+        "headless",
+        "sessionId",
+        "transcript",
+        "model",
+        "contextTokens",
+        "outputTokens",
+        "title",
+        "gitBranch",
+        "permissionMode",
+        "lastTool",
+        "pendingTool",
+        "lastActivityAt",
+        "idleSeconds",
+        "state",
+        "possiblePermissionPrompt",
+        "sharedResourcesLastUsed"
+      ],
+      "properties": {
+        "cwd": { "$ref": "#/$defs/nullableString" },
+        "headless": { "type": "boolean", "description": "Started with -p / --print." },
+        "sessionId": { "$ref": "#/$defs/nullableString" },
+        "transcript": {
+          "type": ["object", "null"],
+          "required": ["path", "match"],
+          "properties": {
+            "path": { "type": "string" },
+            "match": {
+              "enum": ["session-id", "cwd-newest"],
+              "description": "session-id: exact. cwd-newest (heuristic): newest unclaimed transcript in the session's directory."
+            }
+          }
+        },
+        "model": { "$ref": "#/$defs/nullableString" },
+        "contextTokens": {
+          "$ref": "#/$defs/nullableInt",
+          "description": "Input + cache tokens of the last main-conversation request. null when no transcript was found."
+        },
+        "outputTokens": {
+          "$ref": "#/$defs/nullableInt",
+          "description": "Output tokens this session, including subagent turns in the same transcript."
+        },
+        "title": { "$ref": "#/$defs/nullableString" },
+        "gitBranch": { "$ref": "#/$defs/nullableString" },
+        "permissionMode": { "$ref": "#/$defs/nullableString" },
+        "lastTool": { "$ref": "#/$defs/nullableString" },
+        "pendingTool": {
+          "$ref": "#/$defs/nullableString",
+          "description": "Most recent tool call without a result yet."
+        },
+        "lastActivityAt": {
+          "$ref": "#/$defs/timestampOrNull",
+          "description": "When the transcript file last changed."
+        },
+        "idleSeconds": { "$ref": "#/$defs/nullableInt" },
+        "state": {
+          "enum": ["active", "waiting", "idle", "unknown"],
+          "description": "Heuristic, from transcript file age: active (<30s), waiting (tool pending, quiet 30s+), idle, unknown (no transcript)."
+        },
+        "possiblePermissionPrompt": {
+          "type": "boolean",
+          "description": "Heuristic: a tool call has had no result for over 60s, outside bypassPermissions mode and not AskUserQuestion. A long-running command looks the same."
+        },
+        "sharedResourcesLastUsed": {
+          "type": "object",
+          "required": ["chrome", "computerUse"],
+          "properties": {
+            "chrome": { "$ref": "#/$defs/timestampOrNull" },
+            "computerUse": { "$ref": "#/$defs/timestampOrNull" }
+          }
+        }
+      }
+    },
+    "codexProcess": {
+      "allOf": [{ "$ref": "#/$defs/processFields" }],
+      "type": "object",
+      "required": ["kind", "cwd", "sandbox"],
+      "properties": {
+        "kind": { "enum": ["cli", "cli-exec", "chatgpt-app"] },
+        "cwd": { "$ref": "#/$defs/nullableString" },
+        "sandbox": { "$ref": "#/$defs/nullableString", "description": "From --sandbox, if given." }
+      }
+    },
+    "remoteControlHost": {
+      "type": "object",
+      "required": ["pid", "uptime", "uptimeSeconds", "name"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "uptime": { "type": "string" },
+        "uptimeSeconds": { "$ref": "#/$defs/nullableInt" },
+        "name": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "sharedResourceUse": {
+      "type": "object",
+      "required": ["resource", "sessions", "contention"],
+      "properties": {
+        "resource": { "enum": ["chrome", "computerUse"] },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pid", "inUseNow"],
+            "properties": {
+              "pid": { "type": "integer" },
+              "inUseNow": { "type": "boolean", "description": "Its pending tool uses this resource." }
+            }
+          }
+        },
+        "contention": { "type": "boolean", "description": "Two or more sessions used it in the window." }
+      }
+    }
+  }
+}

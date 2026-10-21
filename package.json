@@ -1,0 +1,50 @@
+{
+  "name": "agents-top",
+  "version": "0.1.0",
+  "description": "A `top` for coding-agent sessions: every Claude Code session and Codex process on your machine, in one terminal view.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "coding-agents",
+    "top",
+    "cli",
+    "terminal"
+  ],
+  "license": "MIT",
+  "author": "Neil Mahajan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Neilsmahajan/agents-top.git"
+  },
+  "homepage": "https://github.com/Neilsmahajan/agents-top#readme",
+  "bugs": "https://github.com/Neilsmahajan/agents-top/issues",
+  "type": "module",
+  "bin": {
+    "agents-top": "bin/agents-top.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "schema",
+    "SKILL.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "lint": "biome ci .",
+    "format": "biome format --write .",
+    "smoke:node": "node scripts/smoke-node.mjs",
+    "check": "bun run lint && bun test && node scripts/smoke-node.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  }
+}

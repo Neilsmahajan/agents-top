@@ -1,0 +1,4 @@
+{"type":"permission-mode","mode":"bypassPermissions","sessionId":"33333333-3333-4333-8333-333333333333"}
+{"type":"user","sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/work/api-server","gitBranch":"chore/deps","timestamp":"2026-01-15T08:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"Run the full test suite and fix anything broken."}}
+{"type":"assistant","sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/work/api-server","gitBranch":"chore/deps","timestamp":"2026-01-15T08:00:04.000Z","isSidechain":false,"message":{"id":"msg_b1","model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"toolu_b1","name":"Bash","input":{"command":"make test"}}],"usage":{"input_tokens":2000,"cache_read_input_tokens":150000,"cache_creation_input_tokens":40000,"output_tokens":30}}}
+{"type":"ai-title","sessionId":"33333333-3333-4333-8333-333333333333","aiTitle":"Upgrade dependencies"}
