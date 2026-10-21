@@ -60,9 +60,7 @@ export function applyRecord(st, rec, fileMtimeMs = Date.now()) {
       // messages; count each message once, at its latest value.
       if (msg.id) {
         st.outputTokens += out - (st.msgOut.get(msg.id) ?? 0);
-        st.msgOut.delete(msg.id);
         st.msgOut.set(msg.id, out);
-        if (st.msgOut.size > 512) st.msgOut.delete(st.msgOut.keys().next().value);
       } else st.outputTokens += out;
     }
     if (main && Array.isArray(msg.content))
@@ -82,7 +80,9 @@ const TAIL_BYTES = 64;
 
 /**
  * Transcripts are append-only. If the bytes just before where we stopped
- * reading have changed, the file was rewritten and must be re-read.
+ * reading have changed, the file was rewritten and must be re-read. (A
+ * same-size rewrite that keeps those bytes would go unnoticed; Claude Code
+ * doesn't do that.)
  */
 function tailUnchanged(path, entry) {
   if (!entry.tail.length) return true;

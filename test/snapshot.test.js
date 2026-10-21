@@ -173,6 +173,22 @@ describe("review regressions", () => {
     expect(snap.claude.sessions.map((s) => s.pid)).toEqual([1]);
   });
 
+  test("an npm-installed remote-control host is a host", () => {
+    const snap = run([
+      proc(1, "node --no-warnings /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js remote-control"),
+    ]);
+    expect(snap.claude.remoteControlHosts.map((h) => h.pid)).toEqual([1]);
+    expect(snap.claude.sessions).toEqual([]);
+  });
+
+  test("identical Codex parent and child in different directories are both kept", () => {
+    const snap = run([proc(10, "/usr/local/bin/codex"), proc(11, "/usr/local/bin/codex", { ppid: 10 })], {
+      10: "/work/a",
+      11: "/work/b",
+    });
+    expect(snap.codex.processes.map((p) => p.pid)).toEqual([10, 11]);
+  });
+
   test("an independent Codex session that starts `codex exec` is kept", () => {
     const snap = run([
       proc(10, "/usr/local/bin/codex"),

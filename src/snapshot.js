@@ -4,7 +4,7 @@
 
 import { basename, isAbsolute, resolve } from "node:path";
 import { findTranscript, sharedKind } from "./claude.js";
-import { argAt, etimeToSeconds, isClaudeProcess, isCodexProcess } from "./process.js";
+import { argAt, claudeArgStart, etimeToSeconds, isClaudeProcess, isCodexProcess } from "./process.js";
 
 export const SCHEMA_VERSION = 1;
 
@@ -27,15 +27,17 @@ const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = Date.now(), sidCache }) {
   const claudeProcs = procs.filter((p) => isClaudeProcess(p.args));
   // `claude remote-control` is a subcommand, so it must be the first argument.
-  const rcHosts = claudeProcs.filter((p) => argAt(p.args, 1) === "remote-control");
+  const rcHosts = claudeProcs.filter((p) => argAt(p.args, claudeArgStart(p.args)) === "remote-control");
   const claudeSessions = claudeProcs.filter((p) => !rcHosts.includes(p));
 
-  // A launcher that runs the real binary with the same arguments shows up
-  // twice; keep only the child. A Codex session that starts a different
-  // Codex command (say, `codex exec`) is a separate session and stays.
+  // A launcher that runs the real binary with the same arguments in the same
+  // directory shows up twice; keep only the child. A Codex session that starts
+  // another Codex command (say, `codex exec`) is a separate session and stays.
   const allCodex = procs.filter((p) => isCodexProcess(p.args));
-  const sameArgs = (a, b) => a.args.split(/\s+/).slice(1).join(" ") === b.args.split(/\s+/).slice(1).join(" ");
-  const codexProcs = allCodex.filter((p) => !allCodex.some((q) => q.ppid === p.pid && sameArgs(p, q)));
+  const tail = (p) => p.args.split(/\s+/).slice(1).join(" ");
+  const isLauncherOf = (parent, child) =>
+    child.ppid === parent.pid && tail(child) === tail(parent) && cwds[child.pid] === cwds[parent.pid];
+  const codexProcs = allCodex.filter((p) => !allCodex.some((q) => isLauncherOf(p, q)));
 
   // Exact (--session-id) matches claim their transcripts first, so the
   // cwd-based guess for other processes can't take them.

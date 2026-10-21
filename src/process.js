@@ -79,19 +79,27 @@ export const argAt = (args, i) => args.split(/\s+/)[i] ?? "";
 const argv0 = (args) => argAt(args, 0);
 
 /**
- * Is this a Claude Code process? Matched on the executable, not on any
- * mention of "claude" in the arguments, so shells and tmux lines that merely
- * launch it don't count. Covers the `claude` launcher, the native installer's
- * versioned binary (used when other tools spawn it directly), and npm installs.
+ * Index of Claude Code's first own argument in a process's args, or -1 if
+ * the process isn't Claude Code. Matched on the executable (or, for npm
+ * installs, the script a node/bun runtime runs), not on any mention of
+ * "claude" in the arguments, so shells and tmux lines that merely launch it
+ * don't count. Covers the `claude` launcher, the native installer's
+ * versioned binary (used when other tools spawn it directly), and npm.
  */
-export function isClaudeProcess(args) {
+export function claudeArgStart(args) {
   const exe = argv0(args);
   const name = basename(exe);
-  if (name === "claude") return true;
-  if (/\/claude\/versions\/[^/]+$/.test(exe)) return true;
-  if ((name === "node" || name === "bun") && /\/@anthropic-ai\/claude-code\/cli\.js$/.test(argAt(args, 1))) return true;
-  return false;
+  if (name === "claude" || /\/claude\/versions\/[^/]+$/.test(exe)) return 1;
+  if (name === "node" || name === "bun") {
+    // Skip runtime options (e.g. --no-warnings) to reach the script path.
+    const parts = args.split(/\s+/);
+    const i = parts.findIndex((a, j) => j > 0 && !a.startsWith("-"));
+    if (i > 0 && /\/@anthropic-ai\/claude-code\/cli\.js$/.test(parts[i])) return i + 1;
+  }
+  return -1;
 }
+
+export const isClaudeProcess = (args) => claudeArgStart(args) >= 0;
 
 /** Is this a Codex CLI (or Codex app helper) process? Matched on the executable. */
 export function isCodexProcess(args) {

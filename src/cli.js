@@ -173,13 +173,14 @@ export function main(
   // the last refresh before quitting failed, the error goes to stderr (after
   // the screen is restored) and the exit code is 1.
   const { dim, red } = makeColors(color);
-  let lastError = null;
+  let failed = false; // did the most recent refresh fail?
+  let lastError = "";
   stdout.write("\x1b[?1049h\x1b[?25l");
   const cleanup = () => {
     stdout.write("\x1b[?1049l\x1b[?25h");
     if (stdin.isTTY) stdin.setRawMode(false);
-    if (lastError) warn(`refresh failed: ${lastError}`);
-    exit(lastError ? EXIT.ERROR : EXIT.OK);
+    if (failed) warn(`refresh failed: ${lastError || "unknown error"}`);
+    exit(failed ? EXIT.ERROR : EXIT.OK);
   };
   signals.on("SIGINT", cleanup);
   signals.on("SIGTERM", cleanup);
@@ -187,8 +188,9 @@ export function main(
     let body;
     try {
       body = render(s ?? take(), renderOpts());
-      lastError = null;
+      failed = false;
     } catch (e) {
+      failed = true;
       lastError = e?.message ?? String(e);
       body = red(`refresh failed: ${lastError} (retrying)`);
     }

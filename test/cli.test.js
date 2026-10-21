@@ -183,6 +183,36 @@ describe("live view", () => {
     expect(stdout.text.endsWith("\x1b[?1049l\x1b[?25h")).toBe(true);
   });
 
+  test("a refresh error with an empty message still exits 1", () => {
+    let calls = 0;
+    let tick;
+    let exitCode;
+    const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {} });
+    const stderr = sink();
+    main(["-w"], {
+      env: { CLAUDE_CONFIG_DIR: claudeHome() },
+      stdout: sink(true),
+      stderr,
+      stdin,
+      signals: new EventEmitter(),
+      every: (fn) => {
+        tick = fn;
+      },
+      exit: (c) => {
+        exitCode = c;
+      },
+      listProcesses: () => {
+        if (++calls > 1) throw new Error("");
+        return [];
+      },
+      cwdsFor: () => ({}),
+    });
+    tick();
+    stdin.emit("data", Buffer.from("q"));
+    expect(exitCode).toBe(EXIT.ERROR);
+    expect(stderr.text).toContain("refresh failed");
+  });
+
   test("quitting after a good refresh exits 0", () => {
     let exitCode;
     const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {} });

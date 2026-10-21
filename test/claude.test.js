@@ -95,6 +95,8 @@ describe("token accounting edge cases", () => {
   test("interleaved records of one message are counted once, at the latest value", () => {
     const t = parse([asst("m1", 10), asst("s1", 5, { isSidechain: true }), asst("m1", 12)]);
     expect(t.outputTokens).toBe(17);
+    const many = Array.from({ length: 600 }, (_, i) => asst(`s${i}`, 1, { isSidechain: true }));
+    expect(parse([asst("m0", 10), ...many, asst("m0", 12)]).outputTokens).toBe(612);
   });
 
   test("synthetic records don't reset context or count tokens", () => {

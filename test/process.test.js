@@ -34,6 +34,7 @@ describe("process matching", () => {
     ["/usr/local/bin/claude-foo", false],
     ["vim notes-about-claude.md", false],
     ["node my-script.js /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", false],
+    ["node --no-warnings /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", true],
   ])("claude: %s", (args, want) => expect(isClaudeProcess(args)).toBe(want));
 
   test.each([
