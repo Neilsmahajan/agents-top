@@ -131,9 +131,10 @@ describe("buildSnapshot", () => {
 });
 
 describe("sharedResourceUse (heuristic)", () => {
-  const session = (pid, chrome, pendingTool = null) => ({
+  const session = (pid, chrome, pendingTools = []) => ({
     pid,
-    pendingTool,
+    pendingTool: pendingTools.at(-1) ?? null,
+    pendingTools,
     sharedResourcesLastUsed: {
       chrome: chrome == null ? null : new Date(NOW - chrome).toISOString(),
       computerUse: null,
@@ -153,6 +154,50 @@ describe("sharedResourceUse (heuristic)", () => {
   });
   test("nothing recent, nothing reported", () => {
     expect(sharedResourceUse([session(1, 30 * 60_000), session(2, null)], NOW)).toEqual([]);
+  });
+});
+
+describe("review regressions", () => {
+  const run = (procs, cwds = {}) =>
+    buildSnapshot({
+      procs,
+      cwds,
+      projectsDir: join(claudeHome(), "projects"),
+      readTranscript: createTranscriptReader(),
+      now: NOW,
+    });
+
+  test("a prompt that mentions remote-control is a session, not a host", () => {
+    const snap = run([proc(1, "/usr/local/bin/claude -p explain remote-control options")]);
+    expect(snap.claude.remoteControlHosts).toEqual([]);
+    expect(snap.claude.sessions.map((s) => s.pid)).toEqual([1]);
+  });
+
+  test("an independent Codex session that starts `codex exec` is kept", () => {
+    const snap = run([
+      proc(10, "/usr/local/bin/codex"),
+      proc(11, "/usr/local/bin/codex exec --sandbox read-only review", { ppid: 10 }),
+    ]);
+    expect(snap.codex.processes.map((p) => p.pid)).toEqual([10, 11]);
+  });
+
+  test("a relative -C is resolved against the process cwd", () => {
+    const snap = run([proc(10, "/usr/local/bin/codex exec -C sub/dir")], { 10: "/work/demo-app" });
+    expect(snap.codex.processes[0].cwd).toBe("/work/demo-app/sub/dir");
+  });
+});
+
+describe("parallel pending tools", () => {
+  test("a still-pending Chrome call counts even when a later tool is the newest", () => {
+    const s = {
+      pid: 1,
+      pendingTool: "Bash",
+      pendingTools: ["mcp__claude-in-chrome__navigate", "Bash"],
+      sharedResourcesLastUsed: { chrome: new Date(NOW - 60 * 60_000).toISOString(), computerUse: null },
+    };
+    expect(sharedResourceUse([s], NOW)).toEqual([
+      { resource: "chrome", sessions: [{ pid: 1, inUseNow: true }], contention: false },
+    ]);
   });
 });
 

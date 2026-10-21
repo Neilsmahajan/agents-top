@@ -72,7 +72,11 @@ export function cwdsFor(pids, { platform = process.platform } = {}) {
   return map;
 }
 
-const argv0 = (args) => args.split(/\s/, 1)[0];
+// `ps` flattens argv into one string, so quoting is lost: an argument with a
+// space in it can't be told apart from two. Only argument positions that
+// can't contain user text (the executable, the subcommand) are trusted.
+export const argAt = (args, i) => args.split(/\s+/)[i] ?? "";
+const argv0 = (args) => argAt(args, 0);
 
 /**
  * Is this a Claude Code process? Matched on the executable, not on any
@@ -85,7 +89,7 @@ export function isClaudeProcess(args) {
   const name = basename(exe);
   if (name === "claude") return true;
   if (/\/claude\/versions\/[^/]+$/.test(exe)) return true;
-  if ((name === "node" || name === "bun") && /@anthropic-ai\/claude-code\/cli\.js(\s|$)/.test(args)) return true;
+  if ((name === "node" || name === "bun") && /\/@anthropic-ai\/claude-code\/cli\.js$/.test(argAt(args, 1))) return true;
   return false;
 }
 

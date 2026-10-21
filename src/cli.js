@@ -15,6 +15,9 @@ import { VERSION } from "./version.js";
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 2 };
 
+// Longest timer Node supports (2^31-1 ms), in whole seconds.
+const MAX_INTERVAL = 2_147_483;
+
 export const HELP = `agents-top ${VERSION} — a \`top\` for coding-agent sessions
 
 Shows every Claude Code session running on this machine (directory, model,
@@ -38,7 +41,7 @@ What each provider reports:
 
 Columns (Claude Code):
   state  ● active: transcript written in the last 30s
-         ⚠ waiting: a tool call has had no result for 30s or more
+         ⚠ waiting: a tool call has no result and nothing written for 30s+
          ◌ idle    ? no transcript found
   DIR    ≈ suffix: transcript matched by directory (guess, see below)
   CTX    tokens in the last request's context; yellow over 120k, red over 180k
@@ -47,9 +50,10 @@ Columns (Claude Code):
          browser/desktop
 
 Heuristics (guesses, not facts):
-  perm?   a tool call has had no result for over 60s. Often a permission
-          prompt, but a long-running command looks the same. Never shown in
-          bypassPermissions mode or for AskUserQuestion.
+  perm?   a tool call has no result yet and the transcript hasn't changed
+          for over 60s. Often a permission prompt, but a long-running command
+          looks the same. Never shown in bypassPermissions mode or for
+          AskUserQuestion.
   ≈       no --session-id on the command line, so the newest unclaimed
           transcript in the session's directory is used. Two sessions in one
           directory can be swapped.
@@ -63,8 +67,13 @@ Environment:
 
 Exit codes:
   0  success (including when no agents are running)
-  1  runtime error (for example, ps could not run)
+  1  runtime error (for example, ps could not run, or in -w the last
+     refresh before quitting failed; the message is on stderr)
   2  usage error (unknown option or bad interval)
+
+Limits: ps flattens each process's arguments into one string, so a quoted
+argument containing spaces (a -C path, a -p prompt that mentions
+--session-id) can be misread.
 
 Read-only: agents-top never writes to transcripts or signals processes.`;
 
@@ -83,8 +92,8 @@ export function parseArgs(argv) {
       if (v == null && argv[i + 1] != null && !argv[i + 1].startsWith("-")) v = argv[++i];
       if (v != null) {
         const n = Number(v);
-        if (!/^\d+(\.\d+)?$/.test(v) || !(n >= 0.5))
-          return { error: `invalid interval "${v}" (seconds, at least 0.5)` };
+        if (!/^\d+(\.\d+)?$/.test(v) || !(n >= 0.5) || !(n <= MAX_INTERVAL))
+          return { error: `invalid interval "${v}" (seconds, 0.5 to ${MAX_INTERVAL})` };
         opts.interval = n;
       }
     } else return { error: `unknown argument "${a}"` };
@@ -111,6 +120,8 @@ export function main(
     home = os.homedir(),
     now = () => Date.now(),
     exit = (code) => process.exit(code),
+    signals = process,
+    every = (fn, ms) => setInterval(fn, ms),
   } = {},
 ) {
   const write = (s) => stdout.write(`${s}\n`);
@@ -158,20 +169,28 @@ export function main(
   }
 
   // Live view: alternate screen, redraw every interval, q or Ctrl-C to quit.
+  // A failed refresh is shown in the view and retried on the next tick; if
+  // the last refresh before quitting failed, the error goes to stderr (after
+  // the screen is restored) and the exit code is 1.
   const { dim, red } = makeColors(color);
+  let lastError = null;
   stdout.write("\x1b[?1049h\x1b[?25l");
   const cleanup = () => {
     stdout.write("\x1b[?1049l\x1b[?25h");
-    exit(EXIT.OK);
+    if (stdin.isTTY) stdin.setRawMode(false);
+    if (lastError) warn(`refresh failed: ${lastError}`);
+    exit(lastError ? EXIT.ERROR : EXIT.OK);
   };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  signals.on("SIGINT", cleanup);
+  signals.on("SIGTERM", cleanup);
   const draw = (s) => {
     let body;
     try {
       body = render(s ?? take(), renderOpts());
+      lastError = null;
     } catch (e) {
-      body = red(`error: ${e?.message ?? e}`);
+      lastError = e?.message ?? String(e);
+      body = red(`refresh failed: ${lastError} (retrying)`);
     }
     stdout.write(`\x1b[2J\x1b[H${body}${dim(`\n\n  refresh ${opts.interval}s — q or Ctrl-C to quit`)}\n`);
   };
@@ -184,6 +203,6 @@ export function main(
     });
   }
   draw(snap);
-  setInterval(draw, opts.interval * 1000);
+  every(() => draw(), opts.interval * 1000);
   return new Promise(() => {});
 }

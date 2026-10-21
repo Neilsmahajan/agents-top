@@ -13,8 +13,10 @@ which are about to fight over the same browser.
 
 For each Claude Code session:
 
-- **state**: ● working now, ⚠ a tool call is waiting (for 30s or more), ◌ idle
-- **where**: process id, working directory, git branch, `[-p]` for headless runs
+- **state**: ● working now, ⚠ a tool call is waiting (nothing written for 30s
+  or more), ◌ idle
+- **where**: process id, working directory, `[-p]` for headless runs (the git
+  branch is in `--json`)
 - **model**, **context size** (yellow over 120k tokens, red over 180k) and **output tokens**
 - **tool**: the one running now (cyan) or the last one used (dim), with `perm?`
   when it looks stuck on a permission prompt (a guess, see below)
@@ -30,7 +32,7 @@ network.
 
 ## Install
 
-Needs Node.js 18+ (or Bun) on macOS or Linux.
+Needs Node.js 18 or later, on macOS or Linux. No dependencies.
 
 ```sh
 npm install -g github:Neilsmahajan/agents-top
@@ -42,8 +44,14 @@ Or run it from a clone:
 
 ```sh
 git clone https://github.com/Neilsmahajan/agents-top.git
+mkdir -p ~/.local/bin
 ln -s "$PWD/agents-top/bin/agents-top.js" ~/.local/bin/agents-top
 ```
+
+(`~/.local/bin` needs to be on your `PATH`.)
+
+It runs under Bun as well (`bun bin/agents-top.js`), which is what the tests
+use. The installed command uses `node`.
 
 ## Usage
 
@@ -86,8 +94,8 @@ additions.
 Some of what agents-top shows is inferred. These are labeled in `--help` and in
 the JSON schema as well:
 
-- **`perm?` (possible permission prompt):** a tool call has had no result for
-  over 60 seconds. That's often Claude Code waiting for you to approve it, but a
+- **`perm?` (possible permission prompt):** a tool call has no result yet and
+  the transcript hasn't changed for over 60 seconds. That's often Claude Code waiting for you to approve it, but a
   slow build or test run looks exactly the same. It's never shown in
   `bypassPermissions` mode (which doesn't prompt) or for `AskUserQuestion`.
 - **State (● ⚠ ◌):** based on when the session's transcript file last changed:
@@ -99,6 +107,10 @@ the JSON schema as well:
 - **Shared Chrome / computer-use warnings:** sessions that called those tools in
   the last 15 minutes or are waiting on one now. Two or more may get in each
   other's way; it doesn't know whether they actually did.
+
+One limit of reading processes: `ps` flattens each command line into a single
+string, so a quoted argument containing spaces (a `-C` path, or a `-p` prompt
+that mentions `--session-id`) can be misread.
 
 Exact values: process data (from `ps` and `lsof` or `/proc`), and the model,
 token counts, tools, title and branch as recorded in the transcript. Context is

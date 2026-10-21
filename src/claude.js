@@ -21,8 +21,7 @@ export function freshState() {
     model: null,
     contextTokens: 0,
     outputTokens: 0,
-    lastMsgId: null,
-    lastMsgOut: 0,
+    msgOut: new Map(), // message id -> output tokens already counted
     title: null,
     gitBranch: null,
     permissionMode: null,
@@ -46,23 +45,25 @@ export function applyRecord(st, rec, fileMtimeMs = Date.now()) {
   const main = !rec.isSidechain;
   const msg = rec.message;
   if (rec.type === "assistant" && msg) {
-    if (main && msg.model && msg.model !== "<synthetic>") st.model = msg.model;
+    // "<synthetic>" records are written by Claude Code itself (errors,
+    // interruptions) with zero usage; they aren't requests.
+    const synthetic = msg.model === "<synthetic>";
+    if (main && msg.model && !synthetic) st.model = msg.model;
     const u = msg.usage;
-    if (u) {
+    if (u && !synthetic) {
       if (main)
         st.contextTokens =
           (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       const out = u.output_tokens || 0;
       // One API message is written as several records (one per content
-      // block) that repeat its id and usage; count each message once.
-      if (msg.id && msg.id === st.lastMsgId) {
-        st.outputTokens += out - st.lastMsgOut;
-        st.lastMsgOut = out;
-      } else {
-        st.outputTokens += out;
-        st.lastMsgId = msg.id ?? null;
-        st.lastMsgOut = out;
-      }
+      // block) that repeat its id and usage, possibly interleaved with other
+      // messages; count each message once, at its latest value.
+      if (msg.id) {
+        st.outputTokens += out - (st.msgOut.get(msg.id) ?? 0);
+        st.msgOut.delete(msg.id);
+        st.msgOut.set(msg.id, out);
+        if (st.msgOut.size > 512) st.msgOut.delete(st.msgOut.keys().next().value);
+      } else st.outputTokens += out;
     }
     if (main && Array.isArray(msg.content))
       for (const b of msg.content)
@@ -77,12 +78,33 @@ export function applyRecord(st, rec, fileMtimeMs = Date.now()) {
     for (const b of msg.content) if (b?.type === "tool_result" && b.tool_use_id) st.pending.delete(b.tool_use_id);
 }
 
+const TAIL_BYTES = 64;
+
+/**
+ * Transcripts are append-only. If the bytes just before where we stopped
+ * reading have changed, the file was rewritten and must be re-read.
+ */
+function tailUnchanged(path, entry) {
+  if (!entry.tail.length) return true;
+  const buf = Buffer.alloc(entry.tail.length);
+  let fd;
+  try {
+    fd = openSync(path, "r");
+    readSync(fd, buf, 0, buf.length, entry.offset - entry.tail.length);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  return buf.equals(entry.tail);
+}
+
 /**
  * A transcript reader with a per-file cache, so repeated refreshes (watch
  * mode) only parse newly appended lines.
  */
 export function createTranscriptReader() {
-  const cache = new Map(); // path -> { offset, rest, state }
+  const cache = new Map(); // path -> { ino, offset, rest, tail, state }
   return function readTranscript(path) {
     let stat;
     try {
@@ -91,8 +113,8 @@ export function createTranscriptReader() {
       return null;
     }
     let entry = cache.get(path);
-    if (!entry || stat.size < entry.offset) {
-      entry = { offset: 0, rest: Buffer.alloc(0), state: freshState() };
+    if (!entry || entry.ino !== stat.ino || stat.size < entry.offset || !tailUnchanged(path, entry)) {
+      entry = { ino: stat.ino, offset: 0, rest: Buffer.alloc(0), tail: Buffer.alloc(0), state: freshState() };
       cache.set(path, entry);
     }
     if (stat.size > entry.offset) {
@@ -103,6 +125,7 @@ export function createTranscriptReader() {
           const n = readSync(fd, buf, 0, buf.length, entry.offset);
           if (n <= 0) break;
           entry.offset += n;
+          entry.tail = Buffer.from(Buffer.concat([entry.tail, buf.subarray(0, n)]).subarray(-TAIL_BYTES));
           // Decode only whole lines; keep a trailing partial line (possibly
           // mid-character) as bytes until the rest of it is written.
           const bytes = Buffer.concat([entry.rest, buf.subarray(0, n)]);
@@ -119,7 +142,8 @@ export function createTranscriptReader() {
         closeSync(fd);
       }
     }
-    return { ...entry.state, pending: new Map(entry.state.pending), mtimeMs: stat.mtimeMs, path };
+    const { msgOut, ...state } = entry.state;
+    return { ...state, pending: new Map(state.pending), mtimeMs: stat.mtimeMs, path };
   };
 }
 

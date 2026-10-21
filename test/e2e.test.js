@@ -8,6 +8,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectDirNames } from "../src/claude.js";
+import { cwdsFor, listProcesses } from "../src/process.js";
 import { FIXTURES, ROOT, S1, validator } from "./helpers.js";
 
 const SID = "55555555-5555-4555-8555-555555555555";
@@ -37,11 +38,30 @@ beforeAll(async () => {
     spawn(join(bin, "claude"), [idle, "--session-id", SID], opts),
     spawn(join(bin, "codex"), [idle, "exec", "--sandbox", "read-only"], opts),
   ];
-  await new Promise((r) => setTimeout(r, 500));
+  // Ready when both show up in ps with their cwd, bounded at 4s (under the hook timeout).
+  const deadline = Date.now() + 4_000;
+  for (;;) {
+    for (const c of children) if (c.exitCode != null) throw new Error(`fake agent exited early (${c.exitCode})`);
+    const procs = listProcesses();
+    const pids = children.map((c) => c.pid);
+    const cwds = cwdsFor(pids);
+    if (pids.every((pid) => procs.some((p) => p.pid === pid) && cwds[pid] === workDir)) break;
+    if (Date.now() > deadline) throw new Error("fake agents didn't appear in ps within 4s");
+    await new Promise((r) => setTimeout(r, 100));
+  }
 });
 
-afterAll(() => {
-  for (const c of children) c.kill();
+afterAll(async () => {
+  await Promise.all(
+    children.map((c) =>
+      c.exitCode != null || c.signalCode != null
+        ? null
+        : new Promise((r) => {
+            c.once("exit", r);
+            c.kill();
+          }),
+    ),
+  );
   if (base) rmSync(base, { recursive: true, force: true });
 });
 

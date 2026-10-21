@@ -7,7 +7,19 @@ export function makeColors(enabled) {
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-export const shortModel = (m) => (m ? m.replace(/^claude-/, "").replace(/-\d{8}$/, "") : "?");
+/**
+ * Transcript and process text is untrusted: a title or directory name could
+ * carry terminal escape sequences or newlines. Replace every control
+ * character before it reaches the screen.
+ */
+export const clean = (s) => (s == null ? s : String(s).replace(/[\x00-\x1f\x7f-\x9f]/g, "?"));
+
+export const shortModel = (m) =>
+  m
+    ? clean(m)
+        .replace(/^claude-/, "")
+        .replace(/-\d{8}$/, "")
+    : "?";
 
 export const fmtTokens = (n) => {
   if (n == null) return "?";
@@ -25,7 +37,7 @@ export const fmtAge = (seconds) => {
 
 export const shortTool = (t) =>
   t
-    ? t
+    ? clean(t)
         .replace(/^mcp__claude-in-chrome__/, "chrome:")
         .replace(/^mcp__computer-use__/, "computer:")
         .replace(/^mcp__plugin_github_github__/, "gh:")
@@ -54,7 +66,7 @@ function table(rows, headers, dim) {
 export function render(snap, { color = false, width = 140, home = "" } = {}) {
   const { dim, bold, green, yellow, red, cyan } = makeColors(color);
   const prettyDir = (p) =>
-    p ? (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p) : "?";
+    p ? clean(home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p) : "?";
   const sessions = snap.claude.sessions;
   const codex = snap.codex.processes;
   const hosts = snap.claude.remoteControlHosts;
@@ -70,11 +82,11 @@ export function render(snap, { color = false, width = 140, home = "" } = {}) {
 
   const byPid = new Map(sessions.map((s) => [s.pid, s]));
   for (const use of snap.sharedResources) {
-    const label = use.resource === "chrome" ? "Chrome (claude-in-chrome)" : "computer use";
+    const label = use.resource === "chrome" ? "Chrome" : "Computer use";
     const who = use.sessions
       .map(({ pid, inUseNow }) => {
         const s = byPid.get(pid);
-        const name = truncate(s?.title ?? prettyDir(s?.cwd), 40);
+        const name = truncate(clean(s?.title) ?? prettyDir(s?.cwd), 32);
         return inUseNow ? red(`${name} [in tool now]`) : name;
       })
       .join(dim(" | "));
@@ -121,7 +133,7 @@ export function render(snap, { color = false, width = 140, home = "" } = {}) {
       s.uptime,
       idle == null ? "" : fmtAge(idle),
       toolTxt,
-      s.title ?? "",
+      clean(s.title) ?? "",
     ];
   });
   // The title takes whatever width the other columns leave.
@@ -140,7 +152,7 @@ export function render(snap, { color = false, width = 140, home = "" } = {}) {
         codex.map((p) => [
           String(p.pid),
           p.kind,
-          p.sandbox ? dim(p.sandbox) : "",
+          p.sandbox ? dim(clean(p.sandbox)) : "",
           truncate(prettyDir(p.cwd), 52),
           p.uptime,
         ]),
@@ -151,7 +163,7 @@ export function render(snap, { color = false, width = 140, home = "" } = {}) {
   }
   if (hosts.length)
     out.push(
-      `\n${dim(`remote-control hosts: ${hosts.map((h) => `${h.name ?? "remote-control"} (pid ${h.pid}, up ${h.uptime})`).join(", ")}`)}`,
+      `\n${dim(`remote-control hosts: ${hosts.map((h) => `${clean(h.name) ?? "remote-control"} (pid ${h.pid}, up ${h.uptime})`).join(", ")}`)}`,
     );
 
   return out.join("\n");

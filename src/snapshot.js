@@ -2,9 +2,9 @@
 // transcripts, plus the heuristic flags. Pure apart from transcript reads, so
 // tests can pass in a synthetic process list.
 
-import { basename } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { findTranscript, sharedKind } from "./claude.js";
-import { etimeToSeconds, isClaudeProcess, isCodexProcess } from "./process.js";
+import { argAt, etimeToSeconds, isClaudeProcess, isCodexProcess } from "./process.js";
 
 export const SCHEMA_VERSION = 1;
 
@@ -26,13 +26,16 @@ const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
  */
 export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = Date.now(), sidCache }) {
   const claudeProcs = procs.filter((p) => isClaudeProcess(p.args));
-  const rcHosts = claudeProcs.filter((p) => /\sremote-control(\s|$)/.test(p.args));
+  // `claude remote-control` is a subcommand, so it must be the first argument.
+  const rcHosts = claudeProcs.filter((p) => argAt(p.args, 1) === "remote-control");
   const claudeSessions = claudeProcs.filter((p) => !rcHosts.includes(p));
 
-  let codexProcs = procs.filter((p) => isCodexProcess(p.args));
-  // A wrapper that execs the real binary shows up twice; keep only the leaf.
-  const codexPids = new Set(codexProcs.map((p) => p.pid));
-  codexProcs = codexProcs.filter((p) => !codexProcs.some((q) => q.ppid === p.pid && codexPids.has(q.pid)));
+  // A launcher that runs the real binary with the same arguments shows up
+  // twice; keep only the child. A Codex session that starts a different
+  // Codex command (say, `codex exec`) is a separate session and stays.
+  const allCodex = procs.filter((p) => isCodexProcess(p.args));
+  const sameArgs = (a, b) => a.args.split(/\s+/).slice(1).join(" ") === b.args.split(/\s+/).slice(1).join(" ");
+  const codexProcs = allCodex.filter((p) => !allCodex.some((q) => q.ppid === p.pid && sameArgs(p, q)));
 
   // Exact (--session-id) matches claim their transcripts first, so the
   // cwd-based guess for other processes can't take them.
@@ -49,7 +52,8 @@ export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = 
     if (found) claimed.add(found.path);
     const t = found ? readTranscript(found.path) : null;
     const idleMs = t ? Math.max(0, now - t.mtimeMs) : null;
-    const pendingTool = t?.pending.size ? [...t.pending.values()].at(-1) : null;
+    const pendingTools = t ? [...t.pending.values()] : [];
+    const pendingTool = pendingTools.at(-1) ?? null;
     let state = "unknown";
     if (idleMs != null) state = idleMs < ACTIVE_MS ? "active" : pendingTool ? "waiting" : "idle";
     sessions.push({
@@ -71,6 +75,7 @@ export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = 
       permissionMode: t?.permissionMode ?? null,
       lastTool: t?.lastTool ?? null,
       pendingTool,
+      pendingTools,
       lastActivityAt: iso(t?.mtimeMs),
       idleSeconds: idleMs == null ? null : Math.round(idleMs / 1000),
       state,
@@ -91,7 +96,7 @@ export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = 
     cpuPercent: p.cpu,
     rssKb: p.rssKb,
     kind: p.args.includes("ChatGPT.app") ? "chatgpt-app" : /\sexec(\s|$)/.test(p.args) ? "cli-exec" : "cli",
-    cwd: p.args.match(/\s(?:-C|--cd)[= ](\S+)/)?.[1] ?? cwds[p.pid] ?? null,
+    cwd: codexDir(p, cwds[p.pid] ?? null),
     sandbox: p.args.match(/--sandbox[= ](\S+)/)?.[1] ?? null,
   }));
 
@@ -111,10 +116,17 @@ export function buildSnapshot({ procs, cwds, projectsDir, readTranscript, now = 
   };
 }
 
+/** Codex's working directory: its -C/--cd option (resolved against the process cwd), else the process cwd. */
+function codexDir(p, cwd) {
+  const dir = p.args.match(/\s(?:-C|--cd)[= ](\S+)/)?.[1];
+  if (!dir) return cwd;
+  return isAbsolute(dir) || !cwd ? dir : resolve(cwd, dir);
+}
+
 /**
- * Heuristic: a tool call with no result for over a minute often means Claude
- * Code is waiting on a permission prompt, but a long-running command looks
- * the same. Never flagged in bypassPermissions mode, which doesn't prompt,
+ * Heuristic: a tool call still has no result and the transcript hasn't
+ * changed for over a minute. That often means Claude Code is waiting on a
+ * permission prompt, but a long-running command looks the same. Never flagged in bypassPermissions mode, which doesn't prompt,
  * or for AskUserQuestion, which is a question, not a permission prompt.
  */
 export function possiblePermissionPrompt({ pendingTool, idleMs, permissionMode }) {
@@ -132,15 +144,16 @@ export function possiblePermissionPrompt({ pendingTool, idleMs, permissionMode }
 export function sharedResourceUse(sessions, now) {
   const out = [];
   for (const resource of ["chrome", "computerUse"]) {
+    const inUse = (s) => s.pendingTools.some((t) => sharedKind(t) === resource);
     const users = sessions.filter((s) => {
-      if (sharedKind(s.pendingTool) === resource) return true;
+      if (inUse(s)) return true;
       const t = s.sharedResourcesLastUsed[resource];
       return t && now - Date.parse(t) < SHARED_WINDOW_MS;
     });
     if (!users.length) continue;
     out.push({
       resource,
-      sessions: users.map((s) => ({ pid: s.pid, inUseNow: sharedKind(s.pendingTool) === resource })),
+      sessions: users.map((s) => ({ pid: s.pid, inUseNow: inUse(s) })),
       contention: users.length > 1,
     });
   }

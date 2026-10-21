@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT, HELP, main, parseArgs } from "../src/cli.js";
@@ -66,6 +67,8 @@ describe("argument parsing", () => {
     [["-w", "abc"], /invalid interval/],
     [["--watch=-1"], /invalid interval/],
     [["--json", "-w"], /can't be combined/],
+    [["-w", "9".repeat(400)], /invalid interval/],
+    [["-w", "3000000"], /invalid interval/],
   ])("%j is a usage error", (argv, msg) => expect(parseArgs(argv).error).toMatch(msg));
 });
 
@@ -145,6 +148,62 @@ describe("agent contract", () => {
   });
 });
 
+describe("live view", () => {
+  test("a failed refresh is shown, then reported on stderr with exit 1 after quitting", () => {
+    let calls = 0;
+    let tick;
+    let exitCode;
+    const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {} });
+    const stdout = sink(true);
+    const stderr = sink();
+    main(["-w", "1"], {
+      env: { CLAUDE_CONFIG_DIR: claudeHome() },
+      stdout,
+      stderr,
+      stdin,
+      signals: new EventEmitter(),
+      every: (fn) => {
+        tick = fn;
+      },
+      exit: (c) => {
+        exitCode = c;
+      },
+      listProcesses: () => {
+        if (++calls > 1) throw new Error("ps went away");
+        return [];
+      },
+      cwdsFor: () => ({}),
+    });
+    tick();
+    expect(stdout.text).toContain("refresh failed: ps went away");
+    expect(stderr.text).toBe("");
+    stdin.emit("data", Buffer.from("q"));
+    expect(exitCode).toBe(EXIT.ERROR);
+    expect(stderr.text).toContain("refresh failed: ps went away");
+    expect(stdout.text.endsWith("\x1b[?1049l\x1b[?25h")).toBe(true);
+  });
+
+  test("quitting after a good refresh exits 0", () => {
+    let exitCode;
+    const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {} });
+    main(["-w"], {
+      env: { CLAUDE_CONFIG_DIR: claudeHome() },
+      stdout: sink(true),
+      stderr: sink(),
+      stdin,
+      signals: new EventEmitter(),
+      every: () => {},
+      exit: (c) => {
+        exitCode = c;
+      },
+      listProcesses: () => [],
+      cwdsFor: () => ({}),
+    });
+    stdin.emit("data", Buffer.from("q"));
+    expect(exitCode).toBe(EXIT.OK);
+  });
+});
+
 describe("text output", () => {
   test("shows sessions, labels guesses, and marks Codex as process-only", () => {
     const procs = [
@@ -159,7 +218,7 @@ describe("text output", () => {
     expect(out).toContain("chrome:navigate");
     expect(out).toContain("~/api-server ≈"); // matched by directory, a guess
     expect(out).toContain("codex (process info only)");
-    expect(out).toContain("Chrome (claude-in-chrome)");
+    expect(out).toMatch(/Chrome used in the last 15m by 1/);
   });
 
   test("perm? appears only for a quiet pending tool outside bypass mode", () => {
@@ -194,6 +253,42 @@ describe("text output", () => {
     });
     expect(render(snap("default"))).toContain("perm?");
     expect(render(snap("bypassPermissions"))).not.toContain("perm?");
+  });
+
+  test("control characters in transcript text can't reach the terminal", () => {
+    const now = Date.now();
+    const evil = "pwned\x1b[2J\nfake row\x07";
+    const out = render({
+      generatedAt: new Date(now).toISOString(),
+      claude: {
+        sessions: [
+          {
+            pid: 1,
+            cwd: `/w/${evil}`,
+            headless: false,
+            transcript: { path: "x", match: "session-id" },
+            model: `claude-${evil}`,
+            contextTokens: 1,
+            outputTokens: 1,
+            title: evil,
+            lastTool: evil,
+            pendingTool: null,
+            pendingTools: [],
+            idleSeconds: 1,
+            state: "active",
+            possiblePermissionPrompt: false,
+            cpuPercent: 0,
+            uptime: "01:00",
+          },
+        ],
+        remoteControlHosts: [{ pid: 2, uptime: "01:00", name: evil }],
+      },
+      codex: { processes: [{ pid: 3, kind: "cli", sandbox: evil, cwd: evil, uptime: "01:00" }] },
+      sharedResources: [],
+    });
+    expect(out).not.toContain("\x1b");
+    expect(out).not.toContain("\x07");
+    expect(out).not.toContain("\nfake row");
   });
 
   test("formatters", () => {

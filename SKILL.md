@@ -1,6 +1,6 @@
 ---
 name: agents-top
-description: See every Claude Code session and Codex process running on this machine, with each one's directory, model, context size, current tool and state, using the agents-top CLI. Use when asked what other agents are doing, which sessions are idle or waiting for approval, whether another session is using the shared Chrome browser or computer use, or before starting work that could collide with another agent in the same directory.
+description: List the coding-agent sessions running on this machine with the agents-top CLI. For Claude Code sessions it reports directory, model, context size, current tool and state; for Codex it reports processes only (directory, sandbox). Use when asked what other agents are doing, which Claude Code sessions are idle or may be waiting for approval, whether another session is using the shared Chrome browser or computer use, or before starting work that could collide with another agent in the same directory.
 ---
 
 # agents-top
@@ -26,7 +26,7 @@ Top-level keys: `schemaVersion` (1), `generatedAt`, `claude.sessions`,
 
 Each `claude.sessions[]` entry has `pid`, `cwd`, `sessionId`, `model`,
 `contextTokens`, `outputTokens`, `title`, `gitBranch`, `permissionMode`,
-`lastTool`, `pendingTool`, `idleSeconds`, `state`, `possiblePermissionPrompt`
+`lastTool`, `pendingTool`, `pendingTools`, `idleSeconds`, `state`, `possiblePermissionPrompt`
 and `transcript` (`path`, `match`). `null` means unknown, not zero.
 
 `codex.processes[]` has process information only: `pid`, `cwd`, `kind`
@@ -35,8 +35,9 @@ model, token or tool data for Codex, and Cursor isn't detected at all.
 
 ## Guesses: say so when you report them
 
-- `possiblePermissionPrompt: true` means a tool call has had no result for over
-  60 seconds. It may be waiting for approval, or just running a long command.
+- `possiblePermissionPrompt: true` means a tool call has no result yet and the
+  transcript hasn't changed for over 60 seconds. It may be waiting for
+  approval, or just running a long command.
   Say "may be waiting for approval", not "is blocked".
 - `state` (`active`, `waiting`, `idle`, `unknown`) comes from how recently the
   transcript file changed.
@@ -44,7 +45,8 @@ model, token or tool data for Codex, and Cursor isn't detected at all.
   directory, not by session id, and could belong to another session in the
   same directory.
 - `sharedResources` lists sessions that used Chrome or computer use in the last
-  15 minutes; `contention: true` means two or more did, not that they collided.
+  15 minutes or are waiting on such a tool now; `contention: true` means two or
+  more did, not that they collided.
 
 ## Your own session
 

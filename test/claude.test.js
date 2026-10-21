@@ -54,7 +54,7 @@ describe("transcript parsing", () => {
     const dir = mkdtempSync(join(tmpdir(), "agents-top-inc-"));
     const p = join(dir, "t.jsonl");
     const read = createTranscriptReader();
-    const cut = withEmoji.length - 3; // inside the multi-byte ✅ of the last line
+    const cut = withEmoji.lastIndexOf(Buffer.from("✅")) + 1; // one byte into the 3-byte ✅
     writeFileSync(p, withEmoji.subarray(0, 700));
     read(p);
     appendFileSync(p, withEmoji.subarray(700, cut));
@@ -76,6 +76,58 @@ describe("transcript parsing", () => {
     const t = read(p);
     expect(t.outputTokens).toBe(30);
     expect(t.title).toBe("Upgrade dependencies");
+  });
+});
+
+describe("token accounting edge cases", () => {
+  const parse = (records) => {
+    const dir = mkdtempSync(join(tmpdir(), "agents-top-tok-"));
+    const p = join(dir, "t.jsonl");
+    writeFileSync(p, `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
+    return createTranscriptReader()(p);
+  };
+  const asst = (id, out, extra = {}) => ({
+    type: "assistant",
+    ...extra,
+    message: { id, model: "claude-opus-5-5", usage: { input_tokens: 100, output_tokens: out }, content: [] },
+  });
+
+  test("interleaved records of one message are counted once, at the latest value", () => {
+    const t = parse([asst("m1", 10), asst("s1", 5, { isSidechain: true }), asst("m1", 12)]);
+    expect(t.outputTokens).toBe(17);
+  });
+
+  test("synthetic records don't reset context or count tokens", () => {
+    const t = parse([
+      asst("m1", 10),
+      { type: "assistant", message: { id: "x", model: "<synthetic>", usage: { input_tokens: 0, output_tokens: 0 } } },
+    ]);
+    expect(t.contextTokens).toBe(100);
+    expect(t.model).toBe("claude-opus-5-5");
+  });
+});
+
+describe("rewritten transcripts", () => {
+  test("a same-size replacement is re-read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agents-top-rw-"));
+    const p = join(dir, "t.jsonl");
+    const read = createTranscriptReader();
+    writeFileSync(p, `${JSON.stringify({ type: "ai-title", aiTitle: "first title" })}\n`);
+    expect(read(p).title).toBe("first title");
+    writeFileSync(p, `${JSON.stringify({ type: "ai-title", aiTitle: "other title" })}\n`);
+    expect(read(p).title).toBe("other title");
+  });
+
+  test("a larger replacement doesn't mix old state with a suffix of the new file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agents-top-rw-"));
+    const p = join(dir, "t.jsonl");
+    const read = createTranscriptReader();
+    writeFileSync(p, readFileSync(fixture("-work-api-server", S3)));
+    expect(read(p).outputTokens).toBe(30);
+    writeFileSync(p, readFileSync(fixture("-work-demo-app", S1)));
+    const t = read(p);
+    expect(t.outputTokens).toBe(375);
+    expect(t.permissionMode).toBe("default");
   });
 });
 
